@@ -3,6 +3,54 @@ import './App.css';
 import Tesseract from "tesseract.js";
 import * as PaddlejsOcr from '@paddlejs-models/ocr';
 
+const fileToImgEl = (file) => new Promise((resolve) => {
+  const src = URL.createObjectURL(file)
+  const img = document.createElement('img')
+  img.onload = async () => {
+      resolve(img);
+  };
+  img.src = src
+})
+
+function drawBox(
+  infos,
+  image,
+  canvas,
+) {
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  infos && infos.forEach(info => {
+      const { point, confidence, text } = info;
+      // 开始一个新的绘制路径
+      ctx.beginPath();
+      // 设置绘制线条颜色，默认为黑色
+      ctx.strokeStyle = 'red';
+      // 设置线段宽度，默认为1
+      ctx.lineWidth = 1;
+      // 设置填充颜色，默认透明
+      ctx.fillStyle = 'transparent';
+      // 设置路径起点坐标
+      ctx.moveTo(point[0][0], point[0][1]);
+      ctx.lineTo(point[1][0], point[1][1]);
+      ctx.lineTo(point[2][0], point[2][1]);
+      ctx.lineTo(point[3][0], point[3][1]);
+      // 进行内容填充
+      ctx.fill();
+      ctx.closePath();
+      ctx.stroke();
+
+
+      ctx.fillStyle = 'red';
+      ctx.font = "16px serif";
+      ctx.fillText(text, point[0][0], point[0][1] - 2);
+      confidence && ctx.fillText(confidence.toFixed(2) + '%', point[1][0] - 48, point[1][1] - 2);
+
+      ctx.restore();
+  });
+}
+
 class TesseractOCR {
   /**
    * @type {Tesseract.Worker}
@@ -24,7 +72,8 @@ class TesseractOCR {
     await worker.loadLanguage('chi_sim');
     await worker.initialize('chi_sim');
     await worker.setParameters({
-
+      tessedit_ocr_engine_mode: Tesseract.OEM.TESSERACT_ONLY,
+      // tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
     })
     const cost = Date.now() - s;
     console.info('init finish')
@@ -39,10 +88,28 @@ class TesseractOCR {
 
   async startOCR(file) {
 
+    const imgEl = await fileToImgEl(file);
     const s = Date.now();
-    const res = await this.worker.recognize(file);
+    const res = await this.worker.recognize(imgEl);
     const cost = Date.now() - s;
     console.log(res);
+    const canvas = document.getElementById('tesserect');
+    const infos = res.data.lines.map(lineInfo => {
+      const { bbox, confidence, text } = lineInfo;
+      const point = [
+        [bbox.x0, bbox.y0],
+        [bbox.x1, bbox.y0],
+        [bbox.x1, bbox.y1],
+        [bbox.x0, bbox.y1],
+      ]
+      return {
+        point,
+        confidence,
+        text: text.trim(),
+      }
+    })
+    drawBox(infos, imgEl, canvas)
+
     return [res, cost];
   }
 }
@@ -56,15 +123,21 @@ class PaddleOCR {
     if (this.pending) {
       return;
     }
-
-    console.debug('==> init PaddleOCR')
-
     this.pending = true;
-    const s = Date.now();
-    await PaddlejsOcr.init();
-    const cost = Date.now() - s;
-    console.info('init finish')
-    return cost;
+
+    return new Promise((resolve) => {
+      setTimeout(async () => {
+        console.debug('==> init PaddleOCR')
+
+        alert('注意: Paddlejs 初始化耗时可能需要比较久的时间');
+    
+        const s = Date.now();
+        await PaddlejsOcr.init();
+        const cost = Date.now() - s;
+        console.info('init finish')
+        resolve(cost)
+      }, 2000);
+    })
   }
 
   destroy() {
@@ -72,19 +145,23 @@ class PaddleOCR {
   }
 
   async startOCR(file) {
-    return new Promise((resolve) => {
-      const s = Date.now();
-      const src = URL.createObjectURL(file)
-      const img = document.createElement('img')
-      img.onload = async () => {
-          const res = await PaddlejsOcr.recognize(img, {
-            canvas: document.getElementById('paddle')
-          });
-
-          resolve([res, Date.now() - s]);
-      };
-      img.src = src
+    const imgEl = await fileToImgEl(file);
+    const s = Date.now();
+    const res = await PaddlejsOcr.recognize(imgEl);
+    const cost = Date.now() - s;
+    console.log(res);
+    const canvas = document.getElementById('paddle');
+    const infos = res.text.map((text, idx) => {
+      const point = res.points[idx]
+      return {
+        point,
+        confidence: 0,
+        text: text.trim(),
+      }
     })
+    drawBox(infos, imgEl, canvas)
+
+    return [res, cost];
   }
 }
 const tesseractOCR = new TesseractOCR();
@@ -177,7 +254,7 @@ function App() {
 
         <div className="divider divider-horizontal"></div>
 
-        <canvas></canvas>
+        <canvas id="tesserect"></canvas>
       </div>
 
       <div className="flex w-full">
